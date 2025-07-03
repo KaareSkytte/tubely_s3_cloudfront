@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,40 +42,39 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusBadGateway, "Unable to parse form file", err)
 		return
 	}
+	defer file.Close()
 
 	mediaType := header.Header.Get("Content-Type")
+	if mediaType == "" {
+		respondWithError(w, http.StatusBadRequest, "Missing Content-Type for thumgnail", err)
+	}
 
-	imageData, err := io.ReadAll(file)
+	Data, err := io.ReadAll(file)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Couldn't read data", err)
+		respondWithError(w, http.StatusBadRequest, "Error reading file", err)
 		return
 	}
 
-	metaData, err := cfg.db.GetVideo(videoID)
+	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Couldn't get video from data", err)
+		respondWithError(w, http.StatusBadRequest, "Couldn't find video", err)
 	}
 
-	if userID != metaData.UserID {
-		respondWithError(w, http.StatusUnauthorized, "User doesn't own the video", err)
+	if userID != video.UserID {
+		respondWithError(w, http.StatusUnauthorized, "Not authorized to update this video", nil)
 		return
 	}
 
-	newThumbnail := thumbnail{
-		data:      imageData,
-		mediaType: mediaType,
-	}
+	base64Encoded := base64.StdEncoding.EncodeToString(Data)
+	base64DataURL := fmt.Sprintf("data:%s;base64,%s", mediaType, base64Encoded)
 
-	videoThumbnails[videoID] = newThumbnail
+	video.ThumbnailURL = &base64DataURL
 
-	thumbnailURL := fmt.Sprintf("http://localhost:%s/api/thumbnails/%s", cfg.port, videoID)
-	metaData.ThumbnailURL = &thumbnailURL
-
-	err = cfg.db.UpdateVideo(metaData)
+	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Couldn't update video", err)
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, metaData)
+	respondWithJSON(w, http.StatusOK, video)
 }
